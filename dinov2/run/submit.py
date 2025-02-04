@@ -114,6 +114,9 @@ def submit_jobs(task_class, args, name: str):
     )
     executor.update_parameters(name=name, **executor_params)
 
+    print(executor)
+    print(executor.parameters)
+    exit()
     task = task_class(args)
     job = executor.submit(task)
 

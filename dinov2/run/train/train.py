@@ -50,6 +50,8 @@ def main():
 
     setup_logging()
 
+    print(args)
+    # exit()
     assert os.path.exists(args.config_file), "Configuration file does not exist!"
     submit_jobs(Trainer, args, name="dinov2:train")
     return 0

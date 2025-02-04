@@ -5,3 +5,4 @@
 
 from .image_net import ImageNet
 from .image_net_22k import ImageNet22k
+from .simple_lmdb_dataset import SimpleLMDBDataset

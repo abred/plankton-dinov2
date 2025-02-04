@@ -11,6 +11,7 @@ from functools import partial
 
 from fvcore.common.checkpoint import PeriodicCheckpointer
 import torch
+import wandb
 
 from dinov2.data import SamplerType, make_data_loader, make_dataset
 from dinov2.data import collate_data_and_cast, DataAugmentationDINO, MaskingGenerator
@@ -54,6 +55,13 @@ For python-based LazyConfig, use "path.key=value".
         type=str,
         help="Output directory to save logs and checkpoints",
     )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        help="Name for the wandb log",
+        default="run_",
+    )
+    parser.add_argument("--no-wandb", action="store_true", help="don't use wandb logging")
 
     return parser
 
@@ -131,7 +139,7 @@ def do_test(cfg, model, iteration):
         torch.save({"teacher": new_state_dict}, teacher_ckp_path)
 
 
-def do_train(cfg, model, resume=False):
+def do_train(cfg, model, resume=False, wandb_logging=False):
     model.train()
     inputs_dtype = torch.half
     fp16_scaler = model.fp16_scaler  # for mixed precision training
@@ -197,6 +205,7 @@ def do_train(cfg, model, resume=False):
         target_transform=lambda _: (),
     )
     # sampler_type = SamplerType.INFINITE
+    print("num workers", cfg.train.num_workers)
     sampler_type = SamplerType.SHARDED_INFINITE
     data_loader = make_data_loader(
         dataset=dataset,
@@ -213,6 +222,7 @@ def do_train(cfg, model, resume=False):
     # training loop
 
     iteration = start_iter
+    tot_nb_seen_samples = 0
 
     logger.info("Starting training from iteration {}".format(start_iter))
     metrics_file = os.path.join(cfg.train.output_dir, "training_metrics.json")
@@ -227,6 +237,9 @@ def do_train(cfg, model, resume=False):
         start_iter,
     ):
         current_batch_size = data["collated_global_crops"].shape[0] / 2
+        tot_nb_seen_samples += (
+            current_batch_size * distributed.get_global_size()
+        )  # to get effective batch size
         if iteration > max_iter:
             return
 
@@ -282,6 +295,20 @@ def do_train(cfg, model, resume=False):
         metric_logger.update(current_batch_size=current_batch_size)
         metric_logger.update(total_loss=losses_reduced, **loss_dict_reduced)
 
+        if distributed.is_main_process():
+            if wandb_logging:
+                wandb.log(
+                    {
+                        "#samples": tot_nb_seen_samples,
+                        "lr": lr,
+                        "wd": wd,
+                        "mom": mom,
+                        "ll_lr": last_layer_lr,
+                        "total_loss": losses_reduced,
+                        **loss_dict_reduced,
+                    }
+                )
+
         # checkpointing and testing
 
         if cfg.evaluation.eval_period_iterations > 0 and (iteration + 1) % cfg.evaluation.eval_period_iterations == 0:
@@ -310,7 +337,23 @@ def main(args):
         )
         return do_test(cfg, model, f"manual_{iteration}")
 
-    do_train(cfg, model, resume=not args.no_resume)
+    print("CUDA_VISIBLE_DEVICES", os.environ.get('CUDA_VISIBLE_DEVICES'))
+    print("RANK", os.environ.get('RANK'))
+    print("LOCAL_RANK", os.environ.get('LOCAL_RANK'))
+    print("WORLD_SIZE", os.environ.get('WORLD_SIZE'))
+    print("LOCAL_WORLD_SIZE", os.environ.get('LOCAL_WORLD_SIZE'))
+
+
+    wandb_logging = not args.no_wandb
+    if distributed.is_main_process() and wandb_logging:
+        wandb.init(
+            name=args.run_name,
+            entity="kainmueller-lab",
+            project="AqQua Tests",
+            config=args,
+            dir=cfg.train.output_dir,
+        )
+    do_train(cfg, model, resume=not args.no_resume, wandb_logging=wandb_logging)
 
 
 if __name__ == "__main__":

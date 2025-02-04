@@ -66,11 +66,11 @@ setup(
     package_data={
         "": ["*.yaml"],
     },
-    install_requires=requirements,
-    extras_require={
-        "dev": dev_requirements,
-        "extras": extras_requirements,
-    },
+    # install_requires=requirements,
+    # extras_require={
+    #     "dev": dev_requirements,
+    #     "extras": extras_requirements,
+    # },
     dependency_links=extra_indices,
     install_package_data=True,
     license="Apache",
